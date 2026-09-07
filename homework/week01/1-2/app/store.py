@@ -126,6 +126,26 @@ class InMemoryRunStore:
         async with state.changed:
             return [event for event in state.events if event.seq > after_seq]
 
+    async def wait_for_events(
+        self,
+        run_id: str,
+        after_seq: int,
+    ) -> list[RunEvent]:
+        """等待新事件或终态出现，再返回客户端尚未收到的事件。"""
+
+        state = await self.require(run_id)
+
+        async with state.changed:
+            # wait_for 会先检查条件；条件不满足才释放锁并暂停当前协程。
+            # append() 调用 notify_all() 后，它会重新获得锁并再次检查。
+            await state.changed.wait_for(
+                lambda: (
+                    any(event.seq > after_seq for event in state.events)
+                    or state.status in TERMINAL_STATUSES
+                )
+            )
+            return [event for event in state.events if event.seq > after_seq]
+
     async def request_cancel(self, run_id: str) -> None:
         """发出协作式取消信号；真正停止模型消费由 Agent Loop 完成。"""
 
