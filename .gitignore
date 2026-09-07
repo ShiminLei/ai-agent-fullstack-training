@@ -2,3 +2,6 @@ ex_ctx/*
 .DS_Store
 docs/
 .venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
