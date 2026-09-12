@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.events import RunEvent
-from app.sse import encode_heartbeat, encode_sse, stream_run_events
+from app.sse import SSEDecoder, encode_heartbeat, encode_sse, stream_run_events
 from app.store import InMemoryRunStore
 
 
@@ -80,6 +80,70 @@ def test_encode_heartbeat() -> None:
     assert encode_heartbeat() == b": heartbeat\n\n"
 
 
+def test_quotes_backslashes_and_empty_delta_round_trip() -> None:
+    event = RunEvent(
+        run_id="run_001",
+        seq=4,
+        type="text.delta",
+        data={"delta": '路径是 "C:\\\\temp"，下一段为空：'},
+    )
+    empty = RunEvent(
+        run_id="run_001",
+        seq=5,
+        type="text.delta",
+        data={"delta": ""},
+    )
+
+    assert extract_payload(encode_sse(event))["data"]["delta"] == event.data["delta"]
+    assert extract_payload(encode_sse(empty))["data"]["delta"] == ""
+
+
+def test_decoder_recovers_event_from_every_byte_split() -> None:
+    wire = encode_sse(
+        RunEvent(
+            run_id="run_001",
+            seq=17,
+            type="text.delta",
+            data={"delta": "正在分析"},
+        )
+    )
+    decoder = SSEDecoder()
+    decoded = []
+
+    for byte in wire:
+        decoded.extend(decoder.feed_bytes(bytes([byte])))
+
+    assert len(decoded) == 1
+    assert decoded[0].event == "text.delta"
+    assert decoded[0].event_id == "17"
+    assert json.loads(decoded[0].data)["seq"] == 17
+
+
+def test_decoder_handles_multiple_sticky_frames_and_heartbeat() -> None:
+    first = encode_sse(
+        RunEvent(run_id="run_001", seq=0, type="run.started")
+    )
+    second = encode_sse(
+        RunEvent(run_id="run_001", seq=1, type="run.completed")
+    )
+    decoder = SSEDecoder()
+
+    decoded = decoder.feed_bytes(encode_heartbeat() + first + second)
+
+    assert [event.event for event in decoded] == ["run.started", "run.completed"]
+    assert [event.event_id for event in decoded] == ["0", "1"]
+
+
+def test_decoder_supports_crlf_split_between_reads() -> None:
+    decoder = SSEDecoder()
+    first = decoder.feed_bytes(b"id: 3\r")
+    second = decoder.feed_bytes(b"\nevent: text.delta\r\ndata: {}\r\n\r\n")
+
+    assert first == []
+    assert len(second) == 1
+    assert second[0].event_id == "3"
+
+
 def extract_event_type(wire: bytes) -> str:
     text = wire.decode("utf-8")
     event_line = next(
@@ -133,6 +197,19 @@ async def test_stream_waits_for_new_event_and_stops_at_terminal() -> None:
 
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
+
+
+@pytest.mark.asyncio
+async def test_stream_sends_heartbeat_without_consuming_sequence() -> None:
+    store = InMemoryRunStore()
+    state = await store.create("run_001")
+    stream = stream_run_events(store, "run_001", heartbeat_interval=0.001)
+
+    frame = await asyncio.wait_for(anext(stream), timeout=1)
+
+    assert frame == b": heartbeat\n\n"
+    assert state.next_seq == 0
+    await stream.aclose()
 
 
 @pytest.mark.asyncio

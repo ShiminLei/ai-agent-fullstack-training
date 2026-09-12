@@ -86,3 +86,26 @@ async def test_request_cancel_sets_cancel_event() -> None:
     await store.request_cancel("run_001")
 
     assert state.cancel_event.is_set()
+    assert state.status == "cancelling"
+    assert state.trace["cancel_requested_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_versions_increase() -> None:
+    store = InMemoryRunStore()
+    await store.create("run_001")
+    fields = {
+        "loop_step": "model.streaming",
+        "completed": [],
+        "next_cursor": None,
+        "context_digest": "digest",
+        "tool_state": [],
+        "partial_text": "",
+        "usage": {},
+    }
+
+    first = await store.save_checkpoint("run_001", **fields)
+    second = await store.save_checkpoint("run_001", **fields)
+
+    assert first["version"] == 1
+    assert second["version"] == 2

@@ -10,12 +10,18 @@ from tests.fakes import FakeStreamingModel
 
 
 class BlockingModel:
+    def __init__(self) -> None:
+        self.stopped = False
+
     async def stream(
         self,
         messages: list[dict[str, Any]],
     ) -> AsyncIterator[ModelStreamEvent]:
-        yield ModelStreamEvent(type="text.delta", data={"delta": "部分"})
-        await asyncio.Event().wait()
+        try:
+            yield ModelStreamEvent(type="text.delta", data={"delta": "部分"})
+            await asyncio.Event().wait()
+        finally:
+            self.stopped = True
 
 
 def test_create_stream_and_get_completed_run() -> None:
@@ -23,7 +29,7 @@ def test_create_stream_and_get_completed_run() -> None:
 
     with TestClient(app) as client:
         created = client.post("/v1/runs", json={"prompt": "打个招呼"})
-        assert created.status_code == 201
+        assert created.status_code == 202
         run_id = created.json()["run_id"]
 
         streamed = client.get(f"/v1/runs/{run_id}/events")
@@ -34,11 +40,19 @@ def test_create_stream_and_get_completed_run() -> None:
         assert "event: run.completed" in streamed.text
 
         status = client.get(f"/v1/runs/{run_id}")
-        assert status.json() == {
-            "run_id": run_id,
-            "status": "completed",
-            "next_seq": 4,
-        }
+        status_payload = status.json()
+        assert status_payload["run_id"] == run_id
+        assert status_payload["status"] == "completed"
+        assert status_payload["next_seq"] == 4
+        assert status_payload["trace_id"].startswith("trace_")
+
+        trace = client.get(f"/v1/runs/{run_id}/trace").json()
+        assert trace["ttft_ms"] is not None
+        assert trace["final_status"] == "completed"
+
+        checkpoint = client.get(f"/v1/runs/{run_id}/checkpoint").json()
+        assert checkpoint["loop_step"] == "completed"
+        assert checkpoint["partial_text"] == "你好"
 
 
 def test_events_support_last_event_id_replay() -> None:
@@ -78,7 +92,8 @@ def test_invalid_last_event_id_returns_400() -> None:
 
 
 def test_cancel_run_stops_task_and_creates_terminal_event() -> None:
-    app = create_app(BlockingModel())
+    model = BlockingModel()
+    app = create_app(model)
 
     with TestClient(app) as client:
         run_id = client.post("/v1/runs", json={"prompt": "慢任务"}).json()[
@@ -90,6 +105,24 @@ def test_cancel_run_stops_task_and_creates_terminal_event() -> None:
         assert cancelled.status_code == 200
         assert cancelled.json() == {"run_id": run_id, "status": "cancelled"}
         assert "event: run.cancelled" in streamed.text
+        assert model.stopped is True
+
+
+def test_cancel_after_completion_keeps_the_single_completed_terminal() -> None:
+    """取消与完成竞争时，先写入的终态获胜，并且不会出现第二个终态。"""
+
+    app = create_app(FakeStreamingModel(["完成"]))
+
+    with TestClient(app) as client:
+        run_id = client.post("/v1/runs", json={"prompt": "快速任务"}).json()[
+            "run_id"
+        ]
+        streamed = client.get(f"/v1/runs/{run_id}/events")
+        cancelled = client.post(f"/v1/runs/{run_id}/cancel")
+
+        assert cancelled.json()["status"] == "completed"
+        assert streamed.text.count("event: run.completed") == 1
+        assert "event: run.cancelled" not in streamed.text
 
 
 def test_missing_run_returns_404() -> None:
@@ -99,3 +132,14 @@ def test_missing_run_returns_404() -> None:
         assert client.get("/v1/runs/missing").status_code == 404
         assert client.get("/v1/runs/missing/events").status_code == 404
         assert client.post("/v1/runs/missing/cancel").status_code == 404
+
+
+def test_root_serves_web_client() -> None:
+    app = create_app(FakeStreamingModel([]))
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Streaming Agent Gateway" in response.text
+    assert "new EventSource" in response.text

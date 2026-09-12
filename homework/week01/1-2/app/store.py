@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Literal
+import uuid
 
 from app.events import EventType, RunEvent
 
@@ -10,6 +12,8 @@ RunStatus = Literal[
     "created",
     # Agent Loop 正在消费模型流。
     "running",
+    # 已收到取消请求，正在等待模型或工具真正停止。
+    "cancelling",
     # 以下三种状态都是终态：一旦进入就不能再产生新事件。
     "completed",
     "failed",
@@ -37,6 +41,34 @@ class RunState:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     # 既是保护本 Run 状态的锁，也能在新增事件时唤醒 SSE 订阅者。
     changed: asyncio.Condition = field(default_factory=asyncio.Condition)
+    # Trace 保存可观测性指标；它不直接暴露 Prompt 或 API Key。
+    trace: dict[str, Any] = field(default_factory=dict)
+    # Checkpoint 保存任务恢复所需的最小状态，而不是完整事件历史。
+    checkpoint: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.trace:
+            self.trace = {
+                "trace_id": f"trace_{uuid.uuid4().hex}",
+                "run_id": self.run_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "model_version": None,
+                "prompt_version": "1",
+                "first_delta_at": None,
+                "ttft_ms": None,
+                "total_duration_ms": None,
+                "token_usage": {},
+                "retry_count": 0,
+                "reconnect_count": 0,
+                "cancel_requested_at": None,
+                "cancel_latency_ms": None,
+                # 当前作业没有工具调用，但保留统一 Trace 字段，后续接 Tool Runtime 时直接追加。
+                "tool_calls": [],
+                "checkpoint_version": 0,
+                "final_status": None,
+                "error_code": None,
+                "completed_at": None,
+            }
 
 
 class InMemoryRunStore:
@@ -89,6 +121,10 @@ class InMemoryRunStore:
             # 终态之后禁止再追加事件，从而保证一个 Run 只有一个最终结果。
             if state.status in TERMINAL_STATUSES:
                 raise RuntimeError(f"run is already terminal: {run_id}")
+            if state.status == "cancelling" and event_type == "run.completed":
+                raise RuntimeError(f"cancelling run cannot complete: {run_id}")
+            if event_type == "run.started" and state.status != "created":
+                raise RuntimeError(f"run cannot start from {state.status}: {run_id}")
 
             # Store 集中分配 seq，调用方不允许自己决定事件序号。
             event = RunEvent(
@@ -110,6 +146,9 @@ class InMemoryRunStore:
             elif event_type == "run.cancelled":
                 state.status = "cancelled"
 
+            if state.status in TERMINAL_STATUSES:
+                state.trace["final_status"] = state.status
+
             # 通知正在等待这个 Run 新事件的 SSE 订阅者。
             state.changed.notify_all()
             return event
@@ -125,6 +164,63 @@ class InMemoryRunStore:
 
         async with state.changed:
             return [event for event in state.events if event.seq > after_seq]
+
+    async def update_trace(self, run_id: str, **fields: Any) -> dict[str, Any]:
+        """原子更新 Trace 字段，并返回更新后的副本。"""
+
+        state = await self.require(run_id)
+        async with state.changed:
+            state.trace.update(fields)
+            return dict(state.trace)
+
+    async def increment_trace_counter(self, run_id: str, field_name: str) -> int:
+        """递增重试、重连等 Trace 计数器。"""
+
+        state = await self.require(run_id)
+        async with state.changed:
+            value = int(state.trace.get(field_name, 0)) + 1
+            state.trace[field_name] = value
+            return value
+
+    async def save_checkpoint(
+        self,
+        run_id: str,
+        *,
+        loop_step: str,
+        completed: list[str],
+        next_cursor: str | None,
+        context_digest: str,
+        tool_state: list[dict[str, Any]],
+        partial_text: str,
+        usage: dict[str, Any],
+    ) -> dict[str, Any]:
+        """保存可恢复状态并自动递增 checkpoint 版本。"""
+
+        state = await self.require(run_id)
+        async with state.changed:
+            version = int(state.trace.get("checkpoint_version", 0)) + 1
+            checkpoint = {
+                "run_id": run_id,
+                "version": version,
+                "loop_step": loop_step,
+                "completed": list(completed),
+                "next_cursor": next_cursor,
+                "context_digest": context_digest,
+                "tool_state": list(tool_state),
+                "partial_text": partial_text,
+                "usage": dict(usage),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+            state.checkpoint = checkpoint
+            state.trace["checkpoint_version"] = version
+            return dict(checkpoint)
+
+    async def get_checkpoint(self, run_id: str) -> dict[str, Any] | None:
+        """读取最近一次 checkpoint；调用方拿到的是副本。"""
+
+        state = await self.require(run_id)
+        async with state.changed:
+            return dict(state.checkpoint) if state.checkpoint else None
 
     async def wait_for_events(
         self,
@@ -150,5 +246,12 @@ class InMemoryRunStore:
         """发出协作式取消信号；真正停止模型消费由 Agent Loop 完成。"""
 
         state = await self.require(run_id)
-        # asyncio.Event.set() 不会强行杀死任务，只是把信号变为“已触发”。
-        state.cancel_event.set()
+        async with state.changed:
+            if state.status in TERMINAL_STATUSES:
+                return
+            # 先进入 cancelling，只有清理完成后才能写 run.cancelled。
+            state.status = "cancelling"
+            state.trace["cancel_requested_at"] = datetime.now(timezone.utc).isoformat()
+            # asyncio.Event.set() 不会强行杀死任务，只是把信号变为“已触发”。
+            state.cancel_event.set()
+            state.changed.notify_all()

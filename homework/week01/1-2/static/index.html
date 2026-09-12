@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Streaming Agent Gateway</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: #10233f; }
+    main { width: min(960px, calc(100% - 32px)); margin: 40px auto; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 44px); }
+    header p { margin: 0; color: #607089; }
+    .card { background: white; border: 1px solid #dbe4ef; border-radius: 16px; padding: 20px; box-shadow: 0 12px 40px #17375e12; }
+    textarea { width: 100%; min-height: 120px; resize: vertical; border: 1px solid #bdcadd; border-radius: 10px; padding: 12px; font: inherit; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    button { border: 0; border-radius: 9px; padding: 10px 16px; font: inherit; font-weight: 650; cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    #start { background: #146c43; color: white; }
+    #cancel { background: #c8323e; color: white; }
+    #reconnect { background: #e7edf5; color: #17375e; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 18px 0; }
+    .meta div { padding: 10px 12px; border-radius: 9px; background: #f5f8fc; }
+    .label { display: block; color: #708097; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    .value { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+    #output { min-height: 180px; margin: 0; padding: 16px; border-radius: 10px; background: #0e213b; color: #edf6ff; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #log { max-height: 180px; overflow: auto; margin-top: 14px; padding: 12px; border: 1px solid #e0e7f0; border-radius: 10px; font: 12px ui-monospace, monospace; white-space: pre-wrap; color: #526278; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Streaming Agent Gateway</h1>
+      <p>创建独立 Run，通过 SSE 查看、取消和恢复模型输出。</p>
+    </header>
+
+    <section class="card">
+      <label for="prompt"><strong>任务</strong></label>
+      <textarea id="prompt" placeholder="请输入要交给 Agent 的任务">请介绍 Python 的 async / await。</textarea>
+      <div class="actions">
+        <button id="start">创建并订阅</button>
+        <button id="cancel" disabled>取消 Run</button>
+        <button id="reconnect" disabled>重新订阅</button>
+      </div>
+
+      <div class="meta">
+        <div><span class="label">Run ID</span><span class="value" id="run-id">-</span></div>
+        <div><span class="label">状态</span><span class="value" id="status">idle</span></div>
+        <div><span class="label">Last Seq</span><span class="value" id="last-seq">-1</span></div>
+      </div>
+
+      <pre id="output" aria-live="polite">等待输出…</pre>
+      <div id="log" aria-label="事件日志"></div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_KEY = "streaming-agent-gateway-state-v1";
+    const terminalTypes = new Set(["run.completed", "run.failed", "run.cancelled"]);
+    const promptEl = document.querySelector("#prompt");
+    const outputEl = document.querySelector("#output");
+    const statusEl = document.querySelector("#status");
+    const runIdEl = document.querySelector("#run-id");
+    const lastSeqEl = document.querySelector("#last-seq");
+    const logEl = document.querySelector("#log");
+    const startButton = document.querySelector("#start");
+    const cancelButton = document.querySelector("#cancel");
+    const reconnectButton = document.querySelector("#reconnect");
+
+    let runId = null;
+    let lastSeq = -1;
+    let accumulatedText = "";
+    let eventSource = null;
+    let renderScheduled = false;
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ runId, lastSeq, accumulatedText }));
+    }
+
+    // 网络可以高频接收 delta，页面最多在下一帧统一绘制一次。
+    function scheduleRender() {
+      if (renderScheduled) return;
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        outputEl.textContent = accumulatedText || "等待输出…";
+        renderScheduled = false;
+      });
+    }
+
+    function log(message) {
+      logEl.textContent += `${new Date().toLocaleTimeString()} ${message}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function updateControls() {
+      const active = Boolean(runId) && !terminalTypes.has(statusEl.dataset.eventType || "");
+      cancelButton.disabled = !active;
+      reconnectButton.disabled = !runId;
+      startButton.disabled = active;
+    }
+
+    function closeSubscription() {
+      if (eventSource) eventSource.close();
+      eventSource = null;
+    }
+
+    function handleRunEvent(event) {
+      const payload = JSON.parse(event.data);
+
+      // EventSource 重连可能重放旧事件，客户端必须按 seq 去重。
+      if (payload.seq <= lastSeq) {
+        log(`忽略重复事件 seq=${payload.seq}`);
+        return;
+      }
+      if (lastSeq >= 0 && payload.seq !== lastSeq + 1) {
+        log(`检测到序号缺口：期望 ${lastSeq + 1}，收到 ${payload.seq}`);
+      }
+
+      lastSeq = payload.seq;
+      lastSeqEl.textContent = String(lastSeq);
+      statusEl.dataset.eventType = payload.type;
+      log(`${payload.type} seq=${payload.seq}`);
+
+      if (payload.type === "text.delta") {
+        accumulatedText += payload.data.delta;
+        scheduleRender();
+      } else if (payload.type === "run.started") {
+        statusEl.textContent = "running";
+      } else if (payload.type === "run.retrying") {
+        statusEl.textContent = "retrying";
+      } else if (terminalTypes.has(payload.type)) {
+        statusEl.textContent = payload.type.replace("run.", "");
+        closeSubscription();
+      }
+      saveState();
+      updateControls();
+    }
+
+    function subscribe(id, cursor = -1) {
+      closeSubscription();
+      const suffix = cursor >= 0 ? `?after_seq=${cursor}` : "";
+      eventSource = new EventSource(`/v1/runs/${id}/events${suffix}`);
+      ["run.started", "text.delta", "run.retrying", "run.completed", "run.failed", "run.cancelled"]
+        .forEach(type => eventSource.addEventListener(type, handleRunEvent));
+      eventSource.onopen = () => log("SSE 已连接");
+      eventSource.onerror = () => log("SSE 暂时断开，EventSource 将自动重连");
+    }
+
+    async function createRun() {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+      closeSubscription();
+      runId = null;
+      lastSeq = -1;
+      accumulatedText = "";
+      outputEl.textContent = "等待输出…";
+      logEl.textContent = "";
+      statusEl.textContent = "creating";
+      // 清掉上一轮的终态标记，否则新 Run 创建瞬间按钮状态会沿用旧任务。
+      delete statusEl.dataset.eventType;
+      updateControls();
+
+      const response = await fetch("/v1/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!response.ok) {
+        statusEl.textContent = "create failed";
+        log(await response.text());
+        updateControls();
+        return;
+      }
+      const result = await response.json();
+      runId = result.run_id;
+      runIdEl.textContent = runId;
+      statusEl.textContent = result.status;
+      saveState();
+      updateControls();
+      subscribe(runId);
+    }
+
+    async function cancelRun() {
+      if (!runId) return;
+      // close() 只停止本地读取；真正停止后台任务必须调用 Cancel API。
+      closeSubscription();
+      statusEl.textContent = "cancelling";
+      const response = await fetch(`/v1/runs/${runId}/cancel`, { method: "POST" });
+      const result = await response.json();
+      statusEl.textContent = result.status;
+      statusEl.dataset.eventType = `run.${result.status}`;
+      saveState();
+      updateControls();
+    }
+
+    async function restoreState() {
+      let saved = null;
+      try {
+        saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      } catch {
+        // 浏览器缓存被手工改坏时，丢弃坏数据，不影响创建新 Run。
+        localStorage.removeItem(STORAGE_KEY);
+      }
+      if (!saved?.runId) return;
+      runId = saved.runId;
+      lastSeq = Number(saved.lastSeq ?? -1);
+      accumulatedText = saved.accumulatedText || "";
+      runIdEl.textContent = runId;
+      lastSeqEl.textContent = String(lastSeq);
+      scheduleRender();
+
+      const response = await fetch(`/v1/runs/${runId}`);
+      if (!response.ok) {
+        localStorage.removeItem(STORAGE_KEY);
+        runId = null;
+        updateControls();
+        return;
+      }
+      const state = await response.json();
+      statusEl.textContent = state.status;
+      if (!["completed", "failed", "cancelled"].includes(state.status)) {
+        subscribe(runId, lastSeq);
+      } else {
+        statusEl.dataset.eventType = `run.${state.status}`;
+      }
+      updateControls();
+    }
+
+    startButton.addEventListener("click", createRun);
+    cancelButton.addEventListener("click", cancelRun);
+    reconnectButton.addEventListener("click", () => runId && subscribe(runId, lastSeq));
+    restoreState();
+  </script>
+</body>
+</html>
