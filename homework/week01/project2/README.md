@@ -7,7 +7,7 @@
 - [x] 第一步：统一领域模型和 Adapter 接口
 - [x] 第二步：Responses API Adapter
 - [x] 第三步：Anthropic Messages API Adapter
-- [ ] 第四步：模型路由和 Gateway
+- [x] 第四步：模型路由和 Gateway
 - [ ] 第五步：FastAPI 普通与流式接口
 - [ ] 第六步：结构化输出和 Prompt 版本
 - [ ] 第七步：观测、重试和模型限流
