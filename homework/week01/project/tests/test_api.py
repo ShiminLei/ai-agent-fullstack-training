@@ -15,6 +15,11 @@ def settings(database_path: str) -> Settings:
         {
             "api_keys": ["gateway-secret"],
             "database_url": database_path,
+            "retry": {
+                "max_attempts": 3,
+                "base_delay_seconds": 0,
+                "max_delay_seconds": 0,
+            },
             "providers": {
                 "responses": {
                     "protocol": "responses",

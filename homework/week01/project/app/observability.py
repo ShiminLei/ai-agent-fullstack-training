@@ -10,6 +10,7 @@ import aiosqlite
 @dataclass
 class UsageEvent:
     request_id: str
+    api_key_hash: str
     model: str
     provider: str | None = None
     upstream_model: str | None = None
@@ -29,6 +30,8 @@ class UsageEvent:
 
 
 class UsageRepository:
+    """把每一次网关调用的观测数据写入 SQLite。"""
+
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
 
@@ -39,6 +42,7 @@ class UsageRepository:
                 CREATE TABLE IF NOT EXISTS usage_events (
                     request_id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
+                    api_key_hash TEXT NOT NULL,
                     model TEXT NOT NULL,
                     provider TEXT,
                     upstream_model TEXT,
@@ -64,10 +68,11 @@ class UsageRepository:
         values = asdict(event)
         async with aiosqlite.connect(self.database_path) as db:
             await db.execute(
-                "INSERT OR REPLACE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     values["request_id"],
                     datetime.now(timezone.utc).isoformat(),
+                    values["api_key_hash"],
                     values["model"],
                     values["provider"],
                     values["upstream_model"],
@@ -88,12 +93,13 @@ class UsageRepository:
             )
             await db.commit()
 
-    async def recent(self, limit: int) -> list[dict[str, Any]]:
+    async def recent(self, limit: int = 100) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
             rows = await (
                 await db.execute(
-                    "SELECT * FROM usage_events ORDER BY created_at DESC LIMIT ?", (min(limit, 1000),)
+                    "SELECT * FROM usage_events ORDER BY created_at DESC LIMIT ?",
+                    (min(limit, 1000),),
                 )
             ).fetchall()
         return [dict(row) for row in rows]

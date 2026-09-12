@@ -10,6 +10,7 @@ from app.adapters import AnthropicMessagesAdapter, ResponsesAdapter
 from app.config import Settings
 from app.errors import GatewayError
 from app.gateway import Gateway
+from app.observability import UsageRepository
 from app.prompts import PromptRepository
 from app.router import ModelRouter
 from app.schemas import CompletionRequest
@@ -104,12 +105,16 @@ async def test_gateway_uses_model_to_call_the_correct_protocol(tmp_path):
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    prompts = PromptRepository(str(tmp_path / "gateway.db"))
+    database_path = str(tmp_path / "gateway.db")
+    prompts = PromptRepository(database_path)
+    usage = UsageRepository(database_path)
     await prompts.initialize()
-    gateway = Gateway(ModelRouter(settings(), client), prompts)
+    await usage.initialize()
+    app_settings = settings()
+    gateway = Gateway(app_settings, ModelRouter(app_settings, client), prompts, usage)
 
-    pro_result = await gateway.complete(completion_request("pro"))
-    flash_result = await gateway.complete(completion_request("flash"))
+    pro_result = await gateway.complete(completion_request("pro"), "req_pro", "test")
+    flash_result = await gateway.complete(completion_request("flash"), "req_flash", "test")
     await client.aclose()
 
     assert pro_result.content == "pro answer"

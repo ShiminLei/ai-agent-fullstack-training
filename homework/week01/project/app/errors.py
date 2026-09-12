@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
 
 class GatewayError(Exception):
+    """网关向调用方暴露的统一错误。"""
+
     def __init__(
         self,
         message: str,
@@ -25,7 +24,16 @@ class GatewayError(Exception):
 
 
 class UpstreamError(GatewayError):
-    def __init__(self, message: str, *, status_code: int = 502, retryable: bool = False, details: Any = None):
+    """上游模型服务调用失败，并标记该错误是否适合重试。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 502,
+        retryable: bool = False,
+        details: Any = None,
+    ) -> None:
         super().__init__(
             message,
             status_code=status_code,
@@ -35,16 +43,3 @@ class UpstreamError(GatewayError):
         )
         self.retryable = retryable
 
-
-def error_body(error: GatewayError) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "error": {"message": error.message, "type": error.error_type, "code": error.code}
-    }
-    if error.details is not None:
-        body["error"]["details"] = error.details
-    return body
-
-
-async def handle_gateway_error(_: Request, error: GatewayError) -> JSONResponse:
-    headers = {"Retry-After": "1"} if error.status_code == 429 else None
-    return JSONResponse(error_body(error), status_code=error.status_code, headers=headers)

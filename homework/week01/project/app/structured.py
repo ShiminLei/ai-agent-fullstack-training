@@ -8,7 +8,7 @@ from jsonschema import ValidationError, validate
 
 from app.errors import GatewayError
 
-_FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
+JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
 
 def requested_schema(response_format: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -28,7 +28,7 @@ def requested_schema(response_format: dict[str, Any] | None) -> dict[str, Any] |
 def validate_content(content: str, schema: dict[str, Any] | None) -> None:
     if schema is None:
         return
-    fenced = _FENCE.match(content)
+    fenced = JSON_FENCE.match(content)
     source = fenced.group(1) if fenced else content
     try:
         value = json.loads(source)
@@ -50,4 +50,3 @@ def validate_content(content: str, schema: dict[str, Any] | None) -> None:
             code="invalid_model_output",
             details={"path": list(exc.absolute_path), "message": exc.message},
         ) from exc
-

@@ -47,11 +47,12 @@ async def test_complete_translates_request_and_normalizes_response():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = ResponsesAdapter("https://responses.test", "secret", client)
 
-    result = await adapter.complete(request(), "real-pro-model")
+    result = await adapter.complete(request(), "real-pro-model", "req_complete")
     await client.aclose()
 
     assert captured["request"].url.path == "/v1/responses"
     assert captured["request"].headers["authorization"] == "Bearer secret"
+    assert captured["request"].headers["x-request-id"] == "req_complete"
     assert captured["body"] == {
         "model": "real-pro-model",
         "input": [
@@ -83,7 +84,14 @@ async def test_stream_translates_responses_events_to_unified_events():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = ResponsesAdapter("https://responses.test", "secret", client)
 
-    events = [event async for event in adapter.stream(request(stream=True), "real-pro-model")]
+    events = [
+        event
+        async for event in adapter.stream(
+            request(stream=True),
+            "real-pro-model",
+            "req_stream",
+        )
+    ]
     await client.aclose()
 
     assert "".join(event.delta for event in events) == "Hello"
@@ -100,7 +108,7 @@ async def test_retryable_http_status_is_marked_for_gateway():
     adapter = ResponsesAdapter("https://responses.test", "secret", client)
 
     with pytest.raises(UpstreamError) as captured:
-        await adapter.complete(request(), "real-pro-model")
+        await adapter.complete(request(), "real-pro-model", "req_error")
     await client.aclose()
 
     assert captured.value.status_code == 502

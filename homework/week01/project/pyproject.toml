@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "multi-protocol-llm-gateway"
+name = "multi-protocol-llm-gateway-tutorial"
 version = "0.1.0"
-description = "A unified gateway for OpenAI Responses and Anthropic Messages protocols"
+description = "Step-by-step implementation of a multi-protocol LLM gateway"
 requires-python = ">=3.10"
 dependencies = [
   "aiosqlite>=0.20,<1",

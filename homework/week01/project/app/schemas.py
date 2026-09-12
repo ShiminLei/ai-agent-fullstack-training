@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class FlexibleModel(BaseModel):
+    """保留网关暂时不认识的可选字段，便于协议继续扩展。"""
+
     model_config = ConfigDict(extra="allow")
 
 
@@ -21,6 +23,8 @@ class PromptReference(BaseModel):
 
 
 class CompletionRequest(FlexibleModel):
+    """客户端交给 Gateway 的统一请求，与具体供应商协议无关。"""
+
     model: str
     messages: list[Message] = Field(min_length=1)
     stream: bool = False
@@ -42,6 +46,8 @@ class TokenUsage(BaseModel):
 
 
 class AdapterResult(BaseModel):
+    """不同协议的普通响应经过 Adapter 翻译后的统一结果。"""
+
     content: str
     finish_reason: str | None = None
     usage: TokenUsage = Field(default_factory=TokenUsage)
@@ -49,6 +55,8 @@ class AdapterResult(BaseModel):
 
 
 class StreamEvent(BaseModel):
+    """不同协议的流式事件经过 Adapter 翻译后的统一事件。"""
+
     delta: str = ""
     finish_reason: str | None = None
     usage: TokenUsage | None = None

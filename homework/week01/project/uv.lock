@@ -342,7 +342,7 @@ wheels = [
 ]
 
 [[package]]
-name = "multi-protocol-llm-gateway"
+name = "multi-protocol-llm-gateway-tutorial"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

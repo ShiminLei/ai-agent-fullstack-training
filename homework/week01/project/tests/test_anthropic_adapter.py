@@ -48,12 +48,13 @@ async def test_complete_translates_request_and_normalizes_response():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = AnthropicMessagesAdapter("https://anthropic.test", "secret", client)
 
-    result = await adapter.complete(request(), "real-flash-model")
+    result = await adapter.complete(request(), "real-flash-model", "req_complete")
     await client.aclose()
 
     assert captured["request"].url.path == "/v1/messages"
     assert captured["request"].headers["x-api-key"] == "secret"
     assert captured["request"].headers["anthropic-version"] == "2023-06-01"
+    assert captured["request"].headers["x-request-id"] == "req_complete"
     assert captured["body"] == {
         "model": "real-flash-model",
         "messages": [{"role": "user", "content": "Hello"}],
@@ -88,7 +89,14 @@ async def test_stream_translates_anthropic_events_to_unified_events():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     adapter = AnthropicMessagesAdapter("https://anthropic.test", "secret", client)
 
-    events = [event async for event in adapter.stream(request(stream=True), "real-flash-model")]
+    events = [
+        event
+        async for event in adapter.stream(
+            request(stream=True),
+            "real-flash-model",
+            "req_stream",
+        )
+    ]
     await client.aclose()
 
     assert "".join(event.delta for event in events) == "你好"

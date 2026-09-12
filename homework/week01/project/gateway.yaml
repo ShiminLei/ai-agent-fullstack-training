@@ -5,6 +5,7 @@ retry:
   max_attempts: 3
   base_delay_seconds: 0.25
   max_delay_seconds: 4
+  statuses: [408, 409, 429, 500, 502, 503, 504]
 providers:
   responses_provider:
     protocol: responses
@@ -14,6 +15,7 @@ providers:
     protocol: anthropic
     base_url: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
     api_key: ${ANTHROPIC_API_KEY}
+    anthropic_version: "2023-06-01"
 models:
   deepseek-v4-pro:
     provider: responses_provider
