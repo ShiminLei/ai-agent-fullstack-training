@@ -23,6 +23,7 @@ class ModelConfig(BaseModel):
 
 
 class Settings(BaseModel):
+    api_keys: list[SecretStr] = Field(default_factory=list)
     providers: dict[str, ProviderConfig]
     models: dict[str, ModelConfig]
 
@@ -36,4 +37,3 @@ class Settings(BaseModel):
         if unknown:
             raise ValueError(f"Unknown providers: {sorted(unknown)}")
         return self
-

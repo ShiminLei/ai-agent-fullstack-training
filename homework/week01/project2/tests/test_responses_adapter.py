@@ -87,7 +87,7 @@ async def test_stream_translates_responses_events_to_unified_events():
     await client.aclose()
 
     assert "".join(event.delta for event in events) == "Hello"
-    assert events[-1].finish_reason == "completed"
+    assert events[-1].finish_reason == "stop"
     assert events[-1].usage is not None
     assert events[-1].usage.output_tokens == 2
 

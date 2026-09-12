@@ -82,6 +82,10 @@ class ResponsesAdapter(BaseAdapter):
                     parts.append(item["text"])
         return "".join(parts)
 
+    @staticmethod
+    def _finish_reason(status: str | None) -> str | None:
+        return {"completed": "stop", "incomplete": "length"}.get(status, status)
+
     def _raise_for_status(self, response: httpx.Response) -> None:
         if not response.is_error:
             return
@@ -112,7 +116,7 @@ class ResponsesAdapter(BaseAdapter):
         payload = json_body(response)
         return AdapterResult(
             content=self._content(payload),
-            finish_reason=payload.get("status"),
+            finish_reason=self._finish_reason(payload.get("status")),
             usage=self._usage(payload),
             upstream_id=payload.get("id"),
         )
@@ -142,7 +146,7 @@ class ResponsesAdapter(BaseAdapter):
                     elif payload.get("type") == "response.completed":
                         completed = payload.get("response") or payload
                         yield StreamEvent(
-                            finish_reason=completed.get("status", "completed"),
+                            finish_reason=self._finish_reason(completed.get("status", "completed")),
                             usage=self._usage(completed),
                         )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:

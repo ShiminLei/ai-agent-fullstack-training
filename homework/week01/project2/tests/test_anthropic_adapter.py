@@ -63,7 +63,7 @@ async def test_complete_translates_request_and_normalizes_response():
         "temperature": 0.2,
     }
     assert result.content == "你好！"
-    assert result.finish_reason == "end_turn"
+    assert result.finish_reason == "stop"
     assert result.usage.input_tokens == 8
     assert result.usage.cached_input_tokens == 2
     assert result.usage.cache_creation_input_tokens == 1
@@ -92,7 +92,7 @@ async def test_stream_translates_anthropic_events_to_unified_events():
     await client.aclose()
 
     assert "".join(event.delta for event in events) == "你好"
-    assert events[-1].finish_reason == "end_turn"
+    assert events[-1].finish_reason == "stop"
     assert events[-1].usage is not None
     assert events[-1].usage.input_tokens == 5
     assert events[-1].usage.output_tokens == 2

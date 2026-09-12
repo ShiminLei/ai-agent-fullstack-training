@@ -16,8 +16,11 @@ class Gateway:
         route = self.router.resolve(request.model)
         return await route.adapter.complete(request, route.upstream_model)
 
-    async def stream(self, request: CompletionRequest) -> AsyncIterator[StreamEvent]:
+    def stream(self, request: CompletionRequest) -> AsyncIterator[StreamEvent]:
         route = self.router.resolve(request.model)
-        async for event in route.adapter.stream(request, route.upstream_model):
-            yield event
 
+        async def generate() -> AsyncIterator[StreamEvent]:
+            async for event in route.adapter.stream(request, route.upstream_model):
+                yield event
+
+        return generate()

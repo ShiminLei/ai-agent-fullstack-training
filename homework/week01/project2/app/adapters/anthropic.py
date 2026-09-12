@@ -93,6 +93,16 @@ class AnthropicMessagesAdapter(BaseAdapter):
             if item.get("type") == "text"
         )
 
+    @staticmethod
+    def _finish_reason(reason: str | None) -> str | None:
+        return {
+            "end_turn": "stop",
+            "stop_sequence": "stop",
+            "max_tokens": "length",
+            "model_context_window_exceeded": "length",
+            "tool_use": "tool_calls",
+        }.get(reason, reason)
+
     def _raise_for_status(self, response: httpx.Response) -> None:
         if not response.is_error:
             return
@@ -123,7 +133,7 @@ class AnthropicMessagesAdapter(BaseAdapter):
         payload = json_body(response)
         return AdapterResult(
             content=self._content(payload),
-            finish_reason=payload.get("stop_reason"),
+            finish_reason=self._finish_reason(payload.get("stop_reason")),
             usage=self._usage(payload),
             upstream_id=payload.get("id"),
         )
@@ -158,7 +168,9 @@ class AnthropicMessagesAdapter(BaseAdapter):
                         delta_usage = payload.get("usage") or {}
                         usage.output_tokens = delta_usage.get("output_tokens", 0) or 0
                         yield StreamEvent(
-                            finish_reason=(payload.get("delta") or {}).get("stop_reason", "stop"),
+                            finish_reason=self._finish_reason(
+                                (payload.get("delta") or {}).get("stop_reason", "stop")
+                            ),
                             usage=usage,
                         )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
