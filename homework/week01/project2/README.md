@@ -5,7 +5,7 @@
 ## 当前进度
 
 - [x] 第一步：统一领域模型和 Adapter 接口
-- [ ] 第二步：Responses API Adapter
+- [x] 第二步：Responses API Adapter
 - [ ] 第三步：Anthropic Messages API Adapter
 - [ ] 第四步：模型路由和 Gateway
 - [ ] 第五步：FastAPI 普通与流式接口
@@ -13,10 +13,9 @@
 - [ ] 第七步：观测、重试和模型限流
 - [ ] 第八步：完整验收脚本和使用文档
 
-## 第一步验证
+## 当前验证
 
 ```bash
 uv run --extra dev pytest -q
 uv run --extra dev ruff check .
 ```
-
