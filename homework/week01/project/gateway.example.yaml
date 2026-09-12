@@ -1,0 +1,35 @@
+api_keys:
+  - ${GATEWAY_API_KEY:-dev-gateway-key}
+
+database_url: data/gateway.db
+
+retry:
+  max_attempts: 3
+  base_delay_seconds: 0.25
+  max_delay_seconds: 4
+  statuses: [408, 409, 429, 500, 502, 503, 504]
+
+providers:
+  responses_provider:
+    protocol: responses
+    base_url: ${RESPONSES_BASE_URL:-https://api.openai.com}
+    api_key: ${RESPONSES_API_KEY}
+    timeout_seconds: 120
+  anthropic_provider:
+    protocol: anthropic
+    base_url: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+    api_key: ${ANTHROPIC_API_KEY}
+    anthropic_version: "2023-06-01"
+    timeout_seconds: 120
+
+models:
+  deepseek-v4-pro:
+    provider: responses_provider
+    upstream_model: deepseek-v4-pro
+    requests_per_minute: 60
+    burst: 10
+  deepseek-v4-flash:
+    provider: anthropic_provider
+    upstream_model: deepseek-v4-flash
+    requests_per_minute: 120
+    burst: 20
