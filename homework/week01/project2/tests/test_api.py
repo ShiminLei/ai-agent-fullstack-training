@@ -10,10 +10,11 @@ from app.config import Settings
 from app.main import create_app
 
 
-def settings() -> Settings:
+def settings(database_path: str) -> Settings:
     return Settings.model_validate(
         {
             "api_keys": ["gateway-secret"],
+            "database_url": database_path,
             "providers": {
                 "responses": {
                     "protocol": "responses",
@@ -37,9 +38,10 @@ def settings() -> Settings:
 @asynccontextmanager
 async def api_client(
     handler: Callable[[httpx.Request], httpx.Response],
+    database_path: str,
 ) -> AsyncIterator[httpx.AsyncClient]:
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    app = create_app(settings(), http_client=upstream)
+    app = create_app(settings(database_path), http_client=upstream)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://gateway.test"
@@ -52,7 +54,7 @@ HEADERS = {"Authorization": "Bearer gateway-secret"}
 
 
 @pytest.mark.asyncio
-async def test_non_streaming_http_api_returns_one_unified_shape():
+async def test_non_streaming_http_api_returns_one_unified_shape(tmp_path):
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -64,7 +66,7 @@ async def test_non_streaming_http_api_returns_one_unified_shape():
             },
         )
 
-    async with api_client(handler) as client:
+    async with api_client(handler, str(tmp_path / "gateway.db")) as client:
         response = await client.post(
             "/v1/chat/completions",
             headers=HEADERS,
@@ -79,7 +81,7 @@ async def test_non_streaming_http_api_returns_one_unified_shape():
 
 
 @pytest.mark.asyncio
-async def test_streaming_http_api_returns_normalized_sse():
+async def test_streaming_http_api_returns_normalized_sse(tmp_path):
     def handler(_: httpx.Request) -> httpx.Response:
         body = (
             'event: message_start\ndata: {"type":"message_start","message":'
@@ -91,7 +93,7 @@ async def test_streaming_http_api_returns_normalized_sse():
         )
         return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
 
-    async with api_client(handler) as client:
+    async with api_client(handler, str(tmp_path / "gateway.db")) as client:
         response = await client.post(
             "/v1/chat/completions",
             headers=HEADERS,
@@ -109,8 +111,10 @@ async def test_streaming_http_api_returns_normalized_sse():
 
 
 @pytest.mark.asyncio
-async def test_authentication_model_list_and_unknown_model_error():
-    async with api_client(lambda _: httpx.Response(500)) as client:
+async def test_authentication_model_list_and_unknown_model_error(tmp_path):
+    async with api_client(
+        lambda _: httpx.Response(500), str(tmp_path / "gateway.db")
+    ) as client:
         unauthorized = await client.get("/v1/models")
         models = await client.get("/v1/models", headers=HEADERS)
         missing = await client.post(

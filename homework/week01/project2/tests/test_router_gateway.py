@@ -10,6 +10,7 @@ from app.adapters import AnthropicMessagesAdapter, ResponsesAdapter
 from app.config import Settings
 from app.errors import GatewayError
 from app.gateway import Gateway
+from app.prompts import PromptRepository
 from app.router import ModelRouter
 from app.schemas import CompletionRequest
 
@@ -82,7 +83,7 @@ def test_settings_reject_a_model_with_an_unknown_provider():
 
 
 @pytest.mark.asyncio
-async def test_gateway_uses_model_to_call_the_correct_protocol():
+async def test_gateway_uses_model_to_call_the_correct_protocol(tmp_path):
     calls: list[tuple[str, dict]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -103,7 +104,9 @@ async def test_gateway_uses_model_to_call_the_correct_protocol():
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    gateway = Gateway(ModelRouter(settings(), client))
+    prompts = PromptRepository(str(tmp_path / "gateway.db"))
+    await prompts.initialize()
+    gateway = Gateway(ModelRouter(settings(), client), prompts)
 
     pro_result = await gateway.complete(completion_request("pro"))
     flash_result = await gateway.complete(completion_request("flash"))

@@ -24,6 +24,7 @@ class ModelConfig(BaseModel):
 
 class Settings(BaseModel):
     api_keys: list[SecretStr] = Field(default_factory=list)
+    database_url: str = "data/gateway.db"
     providers: dict[str, ProviderConfig]
     models: dict[str, ModelConfig]
 

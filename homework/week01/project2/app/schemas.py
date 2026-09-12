@@ -61,3 +61,16 @@ class StreamEvent(BaseModel):
     finish_reason: str | None = None
     usage: TokenUsage | None = None
 
+
+class PromptCreate(BaseModel):
+    id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
+    content: str = Field(min_length=1)
+    activate: bool = True
+
+
+class PromptRecord(BaseModel):
+    id: str
+    version: int
+    content: str
+    is_active: bool
+    created_at: str

@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -18,8 +19,9 @@ from app import __version__
 from app.config import Settings
 from app.errors import GatewayError
 from app.gateway import Gateway
+from app.prompts import PromptRepository
 from app.router import ModelRouter
-from app.schemas import AdapterResult, CompletionRequest, StreamEvent
+from app.schemas import AdapterResult, CompletionRequest, PromptCreate, PromptRecord, StreamEvent
 
 
 def error_body(error: GatewayError) -> dict:
@@ -118,9 +120,14 @@ def stream_chunk(request_id: str, model: str, event: StreamEvent) -> bytes:
 def create_app(settings: Settings, *, http_client: httpx.AsyncClient | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        database_path = Path(settings.database_url)
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        prompts = PromptRepository(str(database_path))
+        await prompts.initialize()
         client = http_client or httpx.AsyncClient()
         app.state.settings = settings
-        app.state.gateway = Gateway(ModelRouter(settings, client))
+        app.state.prompts = prompts
+        app.state.gateway = Gateway(ModelRouter(settings, client), prompts)
         yield
         if http_client is None:
             await client.aclose()
@@ -149,7 +156,7 @@ def create_app(settings: Settings, *, http_client: httpx.AsyncClient | None = No
     async def completions(payload: CompletionRequest, request: Request, _: Identity):
         request_id = f"req_{uuid.uuid4().hex}"
         if payload.stream:
-            events = request.app.state.gateway.stream(payload)
+            events = await request.app.state.gateway.stream(payload)
 
             async def sse() -> AsyncIterator[bytes]:
                 async for event in events:
@@ -173,6 +180,19 @@ def create_app(settings: Settings, *, http_client: httpx.AsyncClient | None = No
             "object": "list",
             "data": [{"id": model, "object": "model"} for model in settings.models],
         }
+
+    @app.post("/v1/prompts", response_model=PromptRecord, status_code=201)
+    async def create_prompt(payload: PromptCreate, request: Request, _: Identity):
+        return await request.app.state.prompts.create(payload)
+
+    @app.get("/v1/prompts/{prompt_id}", response_model=PromptRecord)
+    async def get_prompt(
+        prompt_id: str,
+        request: Request,
+        _: Identity,
+        version: int | None = None,
+    ):
+        return await request.app.state.prompts.get(prompt_id, version)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz():

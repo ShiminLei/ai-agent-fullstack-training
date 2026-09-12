@@ -9,7 +9,7 @@
 - [x] 第三步：Anthropic Messages API Adapter
 - [x] 第四步：模型路由和 Gateway
 - [x] 第五步：FastAPI 普通与流式接口
-- [ ] 第六步：结构化输出和 Prompt 版本
+- [x] 第六步：结构化输出和 Prompt 版本
 - [ ] 第七步：观测、重试和模型限流
 - [ ] 第八步：完整验收脚本和使用文档
 
