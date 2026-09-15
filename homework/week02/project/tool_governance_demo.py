@@ -729,6 +729,15 @@ def build_tools() -> list[ToolDefinition]:
             handler=simulated_shell_handler,
             canonical_target=lambda args: str(getattr(args, "command")),
         ),
+        ToolDefinition(
+            name="transfer",
+            description="在当前租户的两个账户之间执行转账",
+            parameters_model=TransferArgs,
+            policy=ToolPolicy(Effect.WRITE, Risk.HIGH, "transfer:execute", True, 1.5, 0, False),
+            handler=transfer_handler,
+            precheck=transfer_precheck,
+            canonical_target=lambda args: f"{args.from_account}->{args.to_account}",
+        ),
     ]
 
 
