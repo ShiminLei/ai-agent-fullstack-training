@@ -629,6 +629,17 @@ async def refund_precheck(raw_arguments: ArgsModel, context: ExecutionContext) -
         raise PolicyDenied("BUSINESS_RULE_DENIED", "退款金额超过可退金额")
 
 
+async def transfer_precheck(raw_arguments: ArgsModel, context: ExecutionContext) -> None:
+    arguments = raw_arguments
+    assert isinstance(arguments, TransferArgs)
+    if arguments.amount > 50_000:
+        raise PolicyDenied("EXCEED_LIMIT", "单笔转账金额不能超过 50000")
+
+    balance = ACCOUNTS.get((context.tenant_id, arguments.from_account), 0.0)
+    if balance < arguments.amount:
+        raise PolicyDenied("INSUFFICIENT_BALANCE", "转出账户余额不足")
+
+
 async def create_refund_handler(
     tool_call_id: str,
     raw_arguments: ArgsModel,
