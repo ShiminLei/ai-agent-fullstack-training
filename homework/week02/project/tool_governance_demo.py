@@ -81,11 +81,17 @@ class CreateRefundArgs(StrictArgs):
     reason: str = Field(min_length=4, max_length=200)
 
 
+class TransferArgs(StrictArgs):
+    from_account: str = Field(pattern=r"^ACC-[A-Z]-[0-9]{6}$")
+    to_account: str = Field(pattern=r"^ACC-[A-Z]-[0-9]{6}$")
+    amount: float = Field(gt=0, le=100_000)
+
+
 class RunShellArgs(StrictArgs):
     command: str = Field(min_length=1, max_length=200)
 
 
-ArgsModel = GetOrderArgs | CreateRefundArgs | RunShellArgs
+ArgsModel = GetOrderArgs | CreateRefundArgs | TransferArgs | RunShellArgs
 Handler = Callable[[str, ArgsModel, ExecutionContext], Awaitable[Mapping[str, Any]]]
 Precheck = Callable[[ArgsModel, ExecutionContext], Awaitable[None]]
 CanonicalTarget = Callable[[ArgsModel], str]
@@ -856,4 +862,3 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     cli_args = parse_args()
     asyncio.run(run_deepseek_agent(cli_args.input) if cli_args.agent else run_offline_demo())
-
