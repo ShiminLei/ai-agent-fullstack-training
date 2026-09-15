@@ -295,7 +295,8 @@ def _redact(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_redact(item) for item in value]
     if isinstance(value, str):
-        return re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "***@***", value)
+        redacted = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "***@***", value)
+        return re.sub(r"\b(ACC-[A-Z]-)[0-9]{2}([0-9]{4})\b", r"\1****\2", redacted)
     return value
 
 
