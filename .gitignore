@@ -9,3 +9,4 @@ __pycache__/
 /tmp
 homework/week01/1-2/data/
 node_modules/
+dist/
