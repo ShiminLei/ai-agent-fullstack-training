@@ -8,3 +8,4 @@ __pycache__/
 .vscode/
 /tmp
 homework/week01/1-2/data/
+node_modules/
